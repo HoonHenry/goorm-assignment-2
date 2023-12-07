@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: wordpress-mysql
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -16,6 +17,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: mysql-pv-claim
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -29,6 +31,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wordpress-mysql
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -36,14 +39,14 @@ spec:
     matchLabels:
       app: wordpress
       tier: mysql
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
         app: wordpress
         tier: mysql
     spec:
+      nodeSelector:
+        app: db
       containers:
       - image: mysql:8.0
         name: mysql
