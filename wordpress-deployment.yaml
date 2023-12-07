@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: wordpress
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -16,6 +17,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: wp-pv-claim
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -29,6 +31,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wordpress
+  namespace: assignment
   labels:
     app: wordpress
 spec:
@@ -36,14 +39,14 @@ spec:
     matchLabels:
       app: wordpress
       tier: frontend
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
         app: wordpress
         tier: frontend
     spec:
+      nodeSelector:
+        app: was
       containers:
       - image: wordpress:6.2.1-apache
         name: wordpress
@@ -72,6 +75,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ingress-wp-mysql
+  namespace: assignment
 spec:
   rules:
     - http:
