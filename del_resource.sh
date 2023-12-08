@@ -1,1 +1,9 @@
-kubectl delete all --all && kubectl delete pvc --all & kubectl delete pv --all && kubectl delete secrets --all && kubectl delete ing ingress-wp-mysql
+ #!/bin/bash                                                                                                                                      
+#nodes=$(kubectl get node -o name | head -n 2)
+#
+#kubectl delete ns assignment && \
+#for node in $nodes; do
+#    kubectl label $node app-
+#done
+
+kubectl delete ns assignment
