@@ -4,6 +4,8 @@ This bransh is for Google Kubernete Engine.
 ## Prerequisites
 ```
 # install ingress-nginx-controller
+# ref: https://kubernetes.github.io/ingress-nginx/deploy/#gce-gke
+
 kubectl create clusterrolebinding cluster-admin-binding \
    --clusterrole cluster-admin \
    --user $(gcloud config get-value account)
