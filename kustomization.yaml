@@ -6,3 +6,4 @@ secretGenerator:
 resources:
   - mysql-deployment.yaml
   - wordpress-deployment.yaml
+  - storageclass.yaml

@@ -23,6 +23,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: ebs-sc
   resources:
     requests:
       storage: 20Gi
@@ -45,8 +46,8 @@ spec:
         app: wordpress
         tier: mysql
     spec:
-      nodeSelector:
-        app: db
+      # nodeSelector:
+      #   app: db
       containers:
       - image: mysql:8.0
         name: mysql

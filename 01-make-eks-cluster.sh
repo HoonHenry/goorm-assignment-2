@@ -1,0 +1,158 @@
+#!/bin/bash
+AWS_REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
+AWS_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.accountId')
+ROOT_FOLDER="environment"
+CLUSTER_NAME="eks-test"
+LOAD_BALANCER_POLICY_NAME=AWSLoadBalancerControllerIAMPolicyFor${CLUSTER_NAME}
+EBS_CSI_POLICY_NAME="AmazonEKS_EBS_CSI_Driver_For_${CLUSTER_NAME}"
+
+# create a folder for the project
+mkdir ~/${ROOT_FOLDER} && cd ~/${ROOT_FOLDER}
+
+# create a yaml for a cluster
+cat << EOF > make-eks-cluster.yaml
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: ${CLUSTER_NAME} # EKS Cluster name
+  region: ${AWS_REGION} # Region Code to place EKS Cluster
+  version: "1.27"
+
+vpc:
+  cidr: "10.0.0.0/16" # CIDR of VPC for use in EKS Cluster
+  nat:
+    gateway: HighlyAvailable
+
+managedNodeGroups:
+  - name: node-group # Name of node group in EKS Cluster
+    instanceType: m5.large # Instance type for node group
+    desiredCapacity: 3 # The number of worker node in EKS Cluster
+    volumeSize: 20  # EBS Volume for worker node (unit: GiB)
+    privateNetworking: true
+    iam:
+      withAddonPolicies:
+        imageBuilder: true # Add permission for Amazon ECR
+        albIngress: true  # Add permission for ALB Ingress
+        cloudWatch: true # Add permission for CloudWatch
+        autoScaler: true # Add permission Auto Scaling
+        ebs: true # Add permission EBS CSI driver
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]
+EOF
+
+# deploy the cluster and 
+# check that the node is properly deployed
+eksctl create cluster -f make-eks-cluster.yaml && \
+kubectl get nodes && \
+
+# check the cluster credentials
+cat ~/.kube/config && \
+
+# define the role ARN(Amazon Resource Number)
+rolearn=$(aws cloud9 describe-environment-memberships --environment-id=$C9_PID | jq -r '.memberships[].userArn')
+echo ${rolearn} && \
+
+# create an identity mapping
+eksctl create iamidentitymapping \
+    --cluster ${CLUSTER_NAME} \
+    --arn ${rolearn} \
+    --group system:masters \
+    --username admin && \
+
+# check aws-auth config map information
+kubectl describe configmap -n kube-system aws-auth && \
+
+mkdir -p manifests/alb-ingress-controller && cd manifests/alb-ingress-controller && \
+
+# Final location
+# ~/environment/manifests/alb-ingress-controller
+
+# create IAM OpenID Connect (OIDC) identity provider for the cluster
+eksctl utils associate-iam-oidc-provider \
+    --region ${AWS_REGION} \
+    --cluster ${CLUSTER_NAME} \
+    --approve && \
+
+# check IAM OIDC provider must exist in the cluster
+OIDC_ID=$(aws eks describe-cluster --name ${CLUSTER_NAME} --query "cluster.identity.oidc.issuer" --output text | awk -F'/' '{printf $5}') && \
+aws iam list-open-id-connect-providers | grep ${OIDC_ID} && \
+
+# create an IAM Policy to grant to the AWS Load Balancer Controller
+curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.5.4/docs/install/iam_policy.json && \
+aws iam create-policy \
+    --policy-name ${LOAD_BALANCER_POLICY_NAME} \
+    --policy-document file://iam_policy.json && \
+
+# create ServiceAccount for AWS Load Balancer Controller
+eksctl create iamserviceaccount \
+    --cluster ${CLUSTER_NAME} \
+    --namespace kube-system \
+    --name aws-load-balancer-controller \
+    --attach-policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/${LOAD_BALANCER_POLICY_NAME} \
+    --override-existing-serviceaccounts \
+    --approve && \
+
+# add AWS Load Balancer controller to the cluster
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.0/cert-manager.yaml && \
+
+# download Load balancer controller yaml file
+curl -Lo v2_5_4_full.yaml https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/download/v2.5.4/v2_5_4_full.yaml && \
+
+# remove the ServiceAccount section in the manifest
+sed -i.bak -e '596,604d' ./v2_5_4_full.yaml && \
+
+# replace cluster name in the Deployment spec section
+sed -i.bak -e "s|your-cluster-name|$CLUSTER_NAME|" ./v2_5_4_full.yaml && \
+
+# deploy AWS Load Balancer controller file
+kubectl apply -f v2_5_4_full.yaml && \
+
+# download the IngressClass and IngressClassParams manifest to the cluster and apply the manifest to the cluster.
+curl -Lo v2_5_4_ingclass.yaml https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/download/v2.5.4/v2_5_4_ingclass.yaml && \
+kubectl apply -f v2_5_4_ingclass.yaml && \
+
+# check that the deployment is successed and the controller is running and service account has been created
+kubectl get deployment -n kube-system aws-load-balancer-controller && \
+kubectl get sa aws-load-balancer-controller -n kube-system -o yaml && \
+
+# detailed property values
+kubectl logs -n kube-system $(kubectl get po -n kube-system | egrep -o "aws-load-balancer[a-zA-Z0-9-]+") && \
+ALBPOD=$(kubectl get pod -n kube-system | egrep -o "aws-load-balancer[a-zA-Z0-9-]+") && \
+
+kubectl describe pod -n kube-system ${ALBPOD} && \
+#################### Cluster settings ###################
+
+#################### EBS CSI Driver settings ###################
+# create an IAM trust policy file for EBS CSI Driver
+cat <<EOF > trust-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${OIDC_ID}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/<XXXXXXXXXX45D83924220DC4815XXXXX>:aud": "sts.amazonaws.com",
+          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/<XXXXXXXXXX45D83924220DC4815XXXXX>:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+        }
+      }
+    }
+  ]
+}
+EOF && \
+aws iam create-role \
+    --role-name ${EBS_CSI_POLICY_NAME} \
+    --assume-role-policy-document file://"trust-policy.json" && \
+aws eks create-addon \
+    --cluster-name ${CLUSTER_NAME} \
+    --addon-name aws-ebs-csi-driver \
+    --service-account-role-arn arn:aws:iam::${AWS_ID}:role/${EBS_CSI_POLICY_NAME} && \ 
+eksctl get addon --cluster ${CLUSTER_NAME} | grep ebs
