@@ -1,13 +1,43 @@
 #!/bin/bash
+#################### AWS Cloud9 settings ###################
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+unzip awscliv2.zip && \
+sudo ./aws/install && \
+export PATH=/usr/local/bin:$PATH && \
+source ~/.bash_profile && \
+aws --version && \
+sudo curl -o /usr/local/bin/kubectl https://s3.us-west-2.amazonaws.com/amazon-eks/1.27.4/2023-08-16/bin/linux/amd64/kubectl && \
+sudo chmod +x /usr/local/bin/kubectl && \
+kubectl version --client=true --short=true && \
+sudo yum install -y jq && \
+sudo yum install -y bash-completion && \
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp && \
+sudo mv -v /tmp/eksctl /usr/local/bin && \
+eksctl version && \
+wget https://gist.githubusercontent.com/joozero/b48ee68e2174a4f1ead93aaf2b582090/raw/2dda79390a10328df66e5f6162846017c682bef5/resize.sh && \
+sh resize.sh && \
+AWS_REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region') && \
+ACCOUNT_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.accountId') && \
+echo "export AWS_REGION=${AWS_REGION}" | tee -a ~/.bash_profile && \
+aws configure set default.region ${AWS_REGION} && \
+echo "export ACCOUNT_ID=${ACCOUNT_ID}" | tee -a ~/.bash_profile && \
+#################### AWS Cloud9 settings ###################
+
+
+#################### Environment variables settings ###################
 AWS_REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
-AWS_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.accountId')
-ROOT_FOLDER="environment"
+ACCOUNT_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.accountId')
+ROOT_FOLDER="eks_test"
 CLUSTER_NAME="eks-test"
 LOAD_BALANCER_POLICY_NAME=AWSLoadBalancerControllerIAMPolicyFor${CLUSTER_NAME}
 EBS_CSI_POLICY_NAME="AmazonEKS_EBS_CSI_Driver_For_${CLUSTER_NAME}"
+# echo $AWS_REGION $ACCOUNT_ID $ROOT_FOLDER $CLUSTER_NAME $LOAD_BALANCER_POLICY_NAME $EBS_CSI_POLICY_NAME
+#################### Environment variables settings ###################
 
+
+#################### Cluster settings ###################
 # create a folder for the project
-mkdir ~/${ROOT_FOLDER} && cd ~/${ROOT_FOLDER}
+mkdir ~/${ROOT_FOLDER} && cd ~/${ROOT_FOLDER} && /
 
 # create a yaml for a cluster
 cat << EOF > make-eks-cluster.yaml
@@ -53,7 +83,7 @@ kubectl get nodes && \
 cat ~/.kube/config && \
 
 # define the role ARN(Amazon Resource Number)
-rolearn=$(aws cloud9 describe-environment-memberships --environment-id=$C9_PID | jq -r '.memberships[].userArn')
+rolearn=$(aws cloud9 describe-environment-memberships --environment-id=$C9_PID | jq -r '.memberships[].userArn') && \
 echo ${rolearn} && \
 
 # create an identity mapping
@@ -69,7 +99,7 @@ kubectl describe configmap -n kube-system aws-auth && \
 mkdir -p manifests/alb-ingress-controller && cd manifests/alb-ingress-controller && \
 
 # Final location
-# ~/environment/manifests/alb-ingress-controller
+# ~/${ROOT_FOLDER}/manifests/alb-ingress-controller
 
 # create IAM OpenID Connect (OIDC) identity provider for the cluster
 eksctl utils associate-iam-oidc-provider \
@@ -126,7 +156,9 @@ ALBPOD=$(kubectl get pod -n kube-system | egrep -o "aws-load-balancer[a-zA-Z0-9-
 kubectl describe pod -n kube-system ${ALBPOD} && \
 #################### Cluster settings ###################
 
+
 #################### EBS CSI Driver settings ###################
+mkdir -p ~/${ROOT_FOLDER}/manifests/ebs_csi_driver && cd ~/${ROOT_FOLDER}/manifests/ebs_csi_driver && \
 # create an IAM trust policy file for EBS CSI Driver
 cat <<EOF > trust-policy.json
 {
@@ -135,7 +167,7 @@ cat <<EOF > trust-policy.json
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::${AWS_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${OIDC_ID}"
+        "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/oidc.eks.${AWS_REGION}.amazonaws.com/id/${OIDC_ID}"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
@@ -147,12 +179,14 @@ cat <<EOF > trust-policy.json
     }
   ]
 }
-EOF && \
+EOF
+
 aws iam create-role \
     --role-name ${EBS_CSI_POLICY_NAME} \
     --assume-role-policy-document file://"trust-policy.json" && \
 aws eks create-addon \
     --cluster-name ${CLUSTER_NAME} \
     --addon-name aws-ebs-csi-driver \
-    --service-account-role-arn arn:aws:iam::${AWS_ID}:role/${EBS_CSI_POLICY_NAME} && \ 
+    --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/${EBS_CSI_POLICY_NAME} && \
 eksctl get addon --cluster ${CLUSTER_NAME} | grep ebs
+#################### EBS CSI Driver settings ###################
