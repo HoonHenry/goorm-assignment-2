@@ -11,5 +11,6 @@
 #    i=$((i + 1))
 #done
 
+sed -i.bak -e "s|your-ingress-group-name|$CLUSTER_NAME|" ./wordpress-deployment.yaml && \
 kubectl create ns assignment && \
 kubectl apply -k ./
