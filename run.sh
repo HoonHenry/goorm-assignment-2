@@ -11,6 +11,12 @@
 #    i=$((i + 1))
 #done
 
-sed -i.bak -e "s|your-ingress-group-name|$CLUSTER_NAME|" ./wordpress-deployment.yaml && \
-kubectl create ns assignment && \
-kubectl apply -k ./
+if [ -z "$1" ]; then
+    echo "No name provided"
+else
+    NAME=$1
+    echo "Creating $NAME for the ingress group name"
+    sed -i.bak -e "s|your-ingress-group-name|$NAME|" ./wordpress-deployment.yaml && \
+    kubectl create ns assignment && \
+    kubectl apply -k ./
+fi
