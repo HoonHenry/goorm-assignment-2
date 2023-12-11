@@ -172,8 +172,8 @@ cat <<EOF > trust-policy.json
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/<XXXXXXXXXX45D83924220DC4815XXXXX>:aud": "sts.amazonaws.com",
-          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/<XXXXXXXXXX45D83924220DC4815XXXXX>:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com",
+          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
         }
       }
     }
@@ -189,4 +189,48 @@ aws eks create-addon \
     --addon-name aws-ebs-csi-driver \
     --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/${EBS_CSI_POLICY_NAME} && \
 eksctl get addon --cluster ${CLUSTER_NAME} | grep ebs
+
+cat <<EOF > ebs-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateGrant",
+        "kms:ListGrants",
+        "kms:RevokeGrant"
+      ],
+      "Resource": [
+        ""
+      ],
+      "Condition": {
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        ""
+      ],
+    }
+  ]
+}
+EOF
+
+aws iam create-policy \
+  --policy-name KMS_Key_For_Encryption_On_EBS_Policy \
+  --policy-document file://ebs-policy.json && \
+aws iam attach-role-policy \
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/KMS_Key_For_Encryption_On_EBS_Policy \
+  --role-name ${EBS_CSI_POLICY_NAME}
 #################### EBS CSI Driver settings ###################
