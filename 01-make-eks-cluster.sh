@@ -30,8 +30,8 @@ ACCOUNT_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document |
 ROOT_FOLDER="eks_test"
 CLUSTER_NAME="eks-test"
 LOAD_BALANCER_POLICY_NAME=AWSLoadBalancerControllerIAMPolicyFor${CLUSTER_NAME}
-EBS_CSI_POLICY_NAME="AmazonEKS_EBS_CSI_Driver_For_${CLUSTER_NAME}"
-# echo $AWS_REGION $ACCOUNT_ID $ROOT_FOLDER $CLUSTER_NAME $LOAD_BALANCER_POLICY_NAME $EBS_CSI_POLICY_NAME
+EBS_CSI_ROLE_NAME="AmazonEKS_EBS_CSI_Driver_For_${CLUSTER_NAME}"
+# echo $AWS_REGION $ACCOUNT_ID $ROOT_FOLDER $CLUSTER_NAME $LOAD_BALANCER_POLICY_NAME $EBS_CSI_ROLE_NAME
 #################### Environment variables settings ###################
 
 
@@ -172,8 +172,8 @@ cat <<EOF > trust-policy.json
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com",
-          "oidc.eks.YOUR_AWS_REGION.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+          "oidc.eks.${AWS_REGION}.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com",
+          "oidc.eks.${AWS_REGION}.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
         }
       }
     }
@@ -182,12 +182,12 @@ cat <<EOF > trust-policy.json
 EOF
 
 aws iam create-role \
-    --role-name ${EBS_CSI_POLICY_NAME} \
+    --role-name ${EBS_CSI_ROLE_NAME} \
     --assume-role-policy-document file://"trust-policy.json" && \
 aws eks create-addon \
     --cluster-name ${CLUSTER_NAME} \
     --addon-name aws-ebs-csi-driver \
-    --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/${EBS_CSI_POLICY_NAME} && \
+    --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/${EBS_CSI_ROLE_NAME} && \
 eksctl get addon --cluster ${CLUSTER_NAME} | grep ebs
 
 cat <<EOF > ebs-policy.json
@@ -197,40 +197,147 @@ cat <<EOF > ebs-policy.json
     {
       "Effect": "Allow",
       "Action": [
-        "kms:CreateGrant",
-        "kms:ListGrants",
-        "kms:RevokeGrant"
+        "ec2:CreateSnapshot",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:ModifyVolume",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeInstances",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVolumesModifications"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags"
       ],
       "Resource": [
-        ""
+        "arn:aws:ec2:*:*:volume/*",
+        "arn:aws:ec2:*:*:snapshot/*"
       ],
       "Condition": {
-        "Bool": {
-          "kms:GrantIsForAWSResource": "true"
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "CreateVolume",
+            "CreateSnapshot"
+          ]
         }
       }
     },
     {
       "Effect": "Allow",
       "Action": [
-        "kms:Encrypt",
-        "kms:Decrypt",
-        "kms:ReEncrypt*",
-        "kms:GenerateDataKey*",
-        "kms:DescribeKey"
+        "ec2:DeleteTags"
       ],
       "Resource": [
-        ""
+        "arn:aws:ec2:*:*:volume/*",
+        "arn:aws:ec2:*:*:snapshot/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVolume"
       ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:RequestTag/ebs.csi.aws.com/cluster": "true"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVolume"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:RequestTag/CSIVolumeName": "*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteVolume"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/ebs.csi.aws.com/cluster": "true"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteVolume"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/CSIVolumeName": "*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteVolume"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/kubernetes.io/created-for/pvc/name": "*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteSnapshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/CSIVolumeSnapshotName": "*"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DeleteSnapshot"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "ec2:ResourceTag/ebs.csi.aws.com/cluster": "true"
+        }
+      }
     }
   ]
 }
 EOF
 
+# aws iam create-policy \
+#   --policy-name EBS_CSI_POLICY \
+#   --policy-document file://ebs-policy.json && \
+# aws iam attach-role-policy \
+#   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/EBS_CSI_POLICY \
+#   --role-name ${EBS_CSI_POLICY_NAME}
+
+EBS_CSI_POLICY_NAME="EBS_CSI_Policy_${CLUSTER_NAME}"
 aws iam create-policy \
-  --policy-name KMS_Key_For_Encryption_On_EBS_Policy \
+  --policy-name ${EBS_CSI_POLICY_NAME} \
   --policy-document file://ebs-policy.json && \
 aws iam attach-role-policy \
-  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/KMS_Key_For_Encryption_On_EBS_Policy \
-  --role-name ${EBS_CSI_POLICY_NAME}
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/${EBS_CSI_POLICY_NAME} \
+  --role-name ${EBS_CSI_ROLE_NAME}
 #################### EBS CSI Driver settings ###################
